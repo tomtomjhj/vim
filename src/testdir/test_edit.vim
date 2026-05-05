@@ -2061,6 +2061,47 @@ func Test_edit_insert_reg()
   bw!
 endfunc
 
+func Test_edit_insert_reg_preserves_op_start_after_edit()
+  for key in ["\<C-P>", "\<C-O>"]
+    new
+    setlocal backspace=eol,start
+
+    call feedkeys("ia\<CR>b\<CR>c\<CR>d\<Esc>Vggyjo"
+          \ .. "\<C-R>" .. key .. "\"\<BS>\<Esc>", 'xt')
+
+    call assert_equal([0, 3, 1, 0], getpos("'["))
+    call assert_equal(['a', 'b', 'a', 'b', 'c', 'd', 'c', 'd'],
+          \ getline(1, '$'))
+    bwipe!
+  endfor
+
+  new
+  setlocal backspace=eol,start
+  call setline(1, ['a', 'b', 'c', 'd'])
+  call setreg('"', ['a', 'b'], 'l')
+  call cursor(4, 1)
+
+  call feedkeys("i\<Cmd>call cursor(2, 1)\<CR>"
+        \ .. "\<C-R>\<C-P>\"\<BS>\<Esc>", 'xt')
+
+  call assert_equal([0, 2, 1, 0], getpos("'["))
+  call assert_equal(['a', 'a', 'bb', 'c', 'd'], getline(1, '$'))
+  bwipe!
+
+  new
+  call setline(1, ['a', 'b', 'c', 'd'])
+  call setreg('a', '', 'c')
+  call cursor(4, 1)
+
+  call feedkeys("i\<Cmd>call cursor(2, 1)\<CR>"
+        \ .. "\<C-R>\<C-P>a"
+        \ .. "\<Cmd>call cursor(3, 1)\<CR>x\<Esc>", 'xt')
+
+  call assert_equal([0, 3, 1, 0], getpos("'["))
+  call assert_equal(['a', 'b', 'xc', 'd'], getline(1, '$'))
+  bwipe!
+endfunc
+
 " Test for positioning cursor after CTRL-R expression failed
 func Test_edit_ctrl_r_failed()
   CheckScreendump

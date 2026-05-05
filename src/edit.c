@@ -96,6 +96,9 @@ static int	revins_scol;		// start column of revins session
 static int	ins_need_undo;		// call u_save() before inserting a
 					// char.  Set when edit() is called.
 					// after that arrow_used is used.
+static int	Insstart_op_start_set;	// TRUE when an Insert mode put
+					// started before Insstart
+static pos_T	Insstart_op_start;	// first position set by do_put()
 
 static int	dont_sync_undo = FALSE;	// CTRL-G U prevents syncing undo for
 					// the next left/right cursor key
@@ -402,6 +405,7 @@ edit(
 
     // Need to save the line for undo before inserting the first char.
     ins_need_undo = TRUE;
+    Insstart_op_start_set = FALSE;
 
     where_paste_started.lnum = 0;
     can_cindent = TRUE;
@@ -2652,7 +2656,10 @@ stop_insert(
     // now in a different buffer.
     if (end_insert_pos != NULL)
     {
-	curbuf->b_op_start = Insstart;
+	if (Insstart_op_start_set && LT_POS(Insstart_op_start, Insstart))
+	    curbuf->b_op_start = Insstart_op_start;
+	else
+	    curbuf->b_op_start = Insstart;
 	curbuf->b_op_start_orig = Insstart_orig;
 	curbuf->b_op_end = *end_insert_pos;
     }
@@ -3511,6 +3518,7 @@ ins_reg(void)
     int		regname;
     int		literally = 0;
     int		vis_active = VIsual_active;
+    int		did_put = FALSE;
 
     /*
      * If we are going to wait for a character, show a '"'.
@@ -3583,13 +3591,20 @@ ins_reg(void)
 #endif
 	if (literally == Ctrl_O || literally == Ctrl_P)
 	{
+	    bufref_T	save_curbuf;
+	    varnumber_T	tick = CHANGEDTICK(curbuf);
+
 	    // Append the command to the redo buffer.
 	    AppendCharToRedobuff(Ctrl_R);
 	    AppendCharToRedobuff(literally);
 	    AppendCharToRedobuff(regname);
 
+	    set_bufref(&save_curbuf, curbuf);
 	    do_put(regname, NULL, BACKWARD, 1L,
 		 (literally == Ctrl_P ? PUT_FIXINDENT : 0) | PUT_CURSEND);
+	    did_put = bufref_valid(&save_curbuf)
+		    && curbuf == save_curbuf.br_buf
+		    && tick != CHANGEDTICK(curbuf);
 	}
 	else if (insert_reg(regname, literally) == FAIL)
 	{
@@ -3609,6 +3624,17 @@ ins_reg(void)
 	ins_need_undo = TRUE;
     u_sync_once = 0;
 #endif
+    if (did_put)
+    {
+	if (!Insstart_op_start_set
+		|| LT_POS(curbuf->b_op_start, Insstart_op_start))
+	{
+	    // A following edit may move Insstart for undo.  Remember if the
+	    // put started before Insstart, so '[ can still include the put.
+	    Insstart_op_start = curbuf->b_op_start;
+	    Insstart_op_start_set = TRUE;
+	}
+    }
     clear_showcmd();
 
     // If the inserted register is empty, we need to remove the '"'
@@ -4208,6 +4234,12 @@ ins_bs(
 		return FALSE;
 	    --Insstart.lnum;
 	    Insstart.col = ml_get_len(Insstart.lnum);
+	}
+	if (Insstart_op_start_set
+		&& curwin->w_cursor.lnum == Insstart_op_start.lnum)
+	{
+	    --Insstart_op_start.lnum;
+	    Insstart_op_start.col = ml_get_len(Insstart_op_start.lnum);
 	}
 	/*
 	 * In replace mode:
